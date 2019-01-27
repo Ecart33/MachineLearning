@@ -20,10 +20,6 @@ class Network(object):
             mini_batches = [training_data[k:k+mini_batch_size] for k in range(0, n)]
             for mini_batch in mini_batches:
                 self.update_weights_and_biases(mini_batch, learning_rate)
-        
-
-
-
 
     #given activations for input layer and weights and biases, returns output layer
     #if backprop specified, returns list of all z vectors (weight*activation + bias)
@@ -89,10 +85,9 @@ class Network(object):
         n_w[-1] = np.dot(delta, activations[-2].transpose())
 
         for l in range(2, self.num_layers):
-            z = zs[-l]
-            #sp is error for layer
-            sp = sigmoid_prime(z)
-            delta = np.dot(self.weights[-l+1].transpose(), delta) * sp
+            #z is error for layer
+            z = zs[-l]    
+            delta = np.dot(self.weights[-l+1].transpose(), delta) * z
             #gradients
             n_b[-l] = delta
             n_w[-l] = np.dot(delta, activations[-l-1].transpose())
