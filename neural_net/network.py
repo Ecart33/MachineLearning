@@ -1,4 +1,5 @@
 import numpy as np
+import random
 
 class Network(object):
 
@@ -11,6 +12,18 @@ class Network(object):
     #takes one argument (z). i is object type
     def sigmoid(i, z):
         return 1.0/(1.0+np.exp(-z))
+
+    def sgd(self, training_data, epochs, mini_batch_size, learning_rate):
+        n = len(training_data)
+        for j in xrange(epochs)
+            random.shuffle(training_data)
+            mini_batches = [training_data[k:k+mini_batch_size] for k in range(0, n)]
+            for mini_batch in mini_batches:
+                self.update_weights_and_biases(mini_batch, learning_rate)
+        
+
+
+
 
     #given activations for input layer and weights and biases, returns output layer
     #if backprop specified, returns list of all z vectors (weight*activation + bias)
@@ -75,7 +88,7 @@ class Network(object):
         n_b[-1] = delta
         n_w[-1] = np.dot(delta, activations[-2].transpose())
 
-        for l in xrange(2, self.num_layers):
+        for l in range(2, self.num_layers):
             z = zs[-l]
             #sp is error for layer
             sp = sigmoid_prime(z)
@@ -90,5 +103,6 @@ class Network(object):
     def cost_derivative(self, output_activations, y):
         return (output_activations-y)
 
+    #inverse of sigmoid function
     def sigmoid_prime(z):
         return sigmoid(z)*(1-sigmoid(z))
