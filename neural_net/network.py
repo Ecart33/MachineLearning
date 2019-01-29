@@ -13,7 +13,7 @@ class Network(object):
         for epoch in range(epochs):
             random.shuffle(training_data)
             mini_batches = [training_data[k:k+batch_size]
-                            for k in range(0, len(training_data)-batch_size, batch_size)]
+                            for k in range(0, len(training_data), batch_size)]
             for batch in mini_batches:
                 weight_gradients = [np.zeros(w.shape) for w in self.weights]
                 bias_gradients = [np.zeros(b.shape) for b in self.biases]
@@ -24,8 +24,8 @@ class Network(object):
                 self.update_weights_biases(weight_gradients, bias_gradients, learning_rate, batch_size)
 
     def update_weights_biases(self, weight_gradient, bias_gradient, learning_rate, batch_size):
-        self.weights = [w-learning_rate/len(batch_size)*wg for w, wg in zip(self.weights, weight_gradient)]
-        self.bias = [b-learning_rate/len(batch_size)*bg for b, bg in zip(self.biases, bias_gradient)]
+        self.weights = [w-learning_rate/batch_size*wg for w, wg in zip(self.weights, weight_gradient)]
+        self.bias = [b-learning_rate/batch_size*bg for b, bg in zip(self.biases, bias_gradient)]
 
     def backpropagate(self, input_layer, training_output):
         weight_gradient = [np.zeros(w.shape) for w in self.weights]
