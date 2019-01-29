@@ -20,7 +20,7 @@ class Network(object):
                 for x,y in batch:
                     weight_gradient, bias_gradient = self.backpropagate(x,y)
                     weight_gradients = [wgs+wg for wgs, wg in zip(weight_gradients, weight_gradient)]
-                    bias_gradients = [bgs+bg for bgs, bg in zip(bias_gradients, wbias_gradient)]
+                    bias_gradients = [bgs+bg for bgs, bg in zip(bias_gradients, bias_gradient)]
                 self.update_weights_biases(weight_gradients, bias_gradients, learning_rate, batch_size)
 
     def update_weights_biases(self, weight_gradient, bias_gradient, learning_rate, batch_size):
