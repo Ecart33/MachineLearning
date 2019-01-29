@@ -9,95 +9,51 @@ class Network(object):
         self.weights = [np.random.randn(y, x)
                         for x, y in zip(layers[:-1], layers[1:])]
 
-    #takes one argument (z). i is object type
-    def sigmoid(i, z):
-        return 1.0/(1.0+np.exp(-z))
-
-    def sgd(self, training_data, epochs, mini_batch_size, learning_rate):
-        n = len(training_data)
-        for j in xrange(epochs)
+    def sgd(self, epochs, batch_size, learning_rate, training_data):
+        for epoch in epochs:
             random.shuffle(training_data)
-            mini_batches = [training_data[k:k+mini_batch_size] for k in range(0, n)]
-            for mini_batch in mini_batches:
-                self.update_weights_and_biases(mini_batch, learning_rate)
+            mini_batches = [training_data[k:k+batch_size]
+                            for k in range(0, len(training_data)-batch_size, batch_size]
+            for batch in mini_batches:
+                for x,y in batch:
+                    weight_gradient, bias_gradient = self.backpropagate(x,y)
+                    self.update_weights_biases(weight_gradient, bias_gradient, learning_rate)
 
-    #given activations for input layer and weights and biases, returns output layer
-    #if backprop specified, returns list of all z vectors (weight*activation + bias)
-    #and activations for all layers
-    def feedforward(self, inputLayer, backprop=False):
-        a = inputLayer
-        l = np.empty([1,0])
-        if backprop:
-            zs = []
-            activations = [inputLayer]
+    def update_weights_biases(self, weight_gradient, bias_gradient, learning_rate):
+        self.weights = [w-learning_rate*wg for w, wg in zip(self.weights, weight_gradient)]
+        self.bias = [w-learning_rate*wg for w, wg in zip(self.weights, weight_gradient)]
+
+    def backpropagate(self, input_layer, training_output):
+        weight_gradient = [np.zeros(w.shape()) for w in sef.weights]
+        bias_gradient = [np.zeros(b.shape()) for b in sef.biases]
+        activations, zs = self.feedforward(input_layer)
+        errors = [sigmoid_derivative(zs[-1])*cost_derivative]
+        bias_gradient[-1]=errors[-1]
+        weight_gradient[-1]=activations[-2]*errors[-1]
+        for i in range(2, self.num_layers):
+            error = np.dot(self.weights[-i+1].transpose(), errors[-i+1])*sigmoid_derivative(zs[-i])
+            errors.insert(0, error)
+            bias_gradient[-i] = error
+            weight_gradient[-i] = activations[-i-1]*error
+        return weight_gradient, bias_gradient
+
+    def cost_derivative(self, a, y):
+        return a-y
+
+    def feedforward(self, input, backprop=False):
+        activations = [input]
+        z = []
         for w, b in zip(self.weights, self.biases):
-            f = np.matmul(w,a)
-            for i in (f[:,None]+b):
-                l = np.append(l, self.sigmoid(i))
-                if backprop:
-                    zs.append(i)
-            a = l
             if backprop:
-                activations.append(a)
-            l = np.empty([1,0])
+                z.append(np.dot(w, activations[-1].transpose()) + b.transpose()))
+            activations.append(self.sigmoid(np.dot(w, activations[-1].transpose()) + b.transpose()))
         if backprop:
-            return activations, zs
+            return activations, z
         else:
-            return a
+            return activations[-1]
 
-    #cost function for single training example
-    def cost_single(self, output, training_output):
-        output_differnces = []
-        for neuron, t_neuron in zip(output, training_output):
-            output_differnces.append((neuron-t_neuron)^2)
-        return sum(output_differnces)/2
+    def sigmoid_derivative(self, z):
+        sigmoid(z)*(1-sigmoid(z))
 
-    #update weights and biases
-    def update_weights_and_biases(self, mini_batch, learning_rate):
-        #initiate empty matrices of weights and biases
-        n_w = [np.zeros(w.shape) for w in self.weights]
-        n_b = [np.zeros(b.shape) for b in self.biases]
-        for input, output in mini_batch:
-            #(dn_w, dn_b) is gradient of cost function
-            #layer by layer arrays of gradient weights and biases
-            dn_w, dn_b = self.backprop(input, output)
-            #set n_w and n_b to contain all gradients of weights and biases
-            n_w = [nw+dnw for nw, dnw in zip(n_w, dn_w)]
-            n_b = [nb+dnb for nb, dnb in zip(n_b, dn_b)]
-        #update weights and biases based off of gradient descent formulas
-        self.weights = [w-(learning_rate/len(mini_batch))*nw for
-                        w, nw in zip(self.weights, n_w)]
-        self.biases = [b-(learning_rate/len(mini_batch))*nb for
-                        b, nb in zip(self.biases, n_b)]
-
-    #figure out gradient of cost function
-    def backprop(input, output):
-        n_w = [np.zeros(w.shape) for w in self.weights]
-        n_b = [np.zeros(b.shape) for b in self.biases]
-
-        #feedforward
-        activations, zs = self.feedforward(input, backprop=True)
-
-        #calculate error for each layer
-        delta = self.cost_derivative(activations[-1], y) * sigmoid_prime(zs[-1])
-
-        n_b[-1] = delta
-        n_w[-1] = np.dot(delta, activations[-2].transpose())
-
-        for l in range(2, self.num_layers):
-            #z is error for layer
-            z = zs[-l]    
-            delta = np.dot(self.weights[-l+1].transpose(), delta) * z
-            #gradients
-            n_b[-l] = delta
-            n_w[-l] = np.dot(delta, activations[-l-1].transpose())
-        #return gradients of each layer
-        return (nabla_b, nabla_w)
-
-
-    def cost_derivative(self, output_activations, y):
-        return (output_activations-y)
-
-    #inverse of sigmoid function
-    def sigmoid_prime(z):
-        return sigmoid(z)*(1-sigmoid(z))
+    def sigmoid(self, z):
+        return 1/(1+np.exp(-z))
