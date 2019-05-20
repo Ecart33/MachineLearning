@@ -57,3 +57,6 @@ class Input(object):
     def __init__(self, shape, channels):
         self.shape = shape
         self.channels = channels
+
+net = Network([Input((30, 30), 3), Convolute(3, (3, 3), (2, 2)), Dense(100), Dense(10)])
+print(net.shapes)
