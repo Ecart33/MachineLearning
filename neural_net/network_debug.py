@@ -2,6 +2,10 @@ import numpy as np
 import random
 import math
 
+'''
+Network([Input([...]), Convolute([...]), Flatten(), Dense([...]), (Dense[...]]) will throw error that 
+'AttributeError: 'Convolute' object has no attribute 'size'' because it doesn't recognize 'ifinstance(layer, convolute)'
+'''
 class Network(object):
     def __init__(self, layers):
         self.layers = layers
