@@ -4,7 +4,9 @@ import math
 from scipy import signal
 import skimage.measure
 
-class Network(object):
+#rgb input is 3 differnet channels treat as 3 different feature maps in MLP treat as 3 different networks?
+
+class MLPNetwork(object):
 
     def __init__(self, layers):
         self.num_layers = len(layers)
@@ -109,41 +111,68 @@ class FCNN(object):
 #calculate local gradient in layer class?
 '''
 
-class ConvolutionalNetwork(object):
+#NOTE potentially one class can encompass mlp as well as convolutional because would just mean that instead of 
+#ConvolutionalNetwork([Input([...]), Convolute([...]), Flatten(), Dense([...]), (Dense[...]]) 
+#it would be ConvolutionalNetwork([Input([...]), Flatten([...]), Dense([...]), (Dense[...]])
 
-    #params for class are layers described by class e.g. ConvolutionalNetwork([ConvolutionalLayer[...], ConnectedLayer[...], OutputLayer[...]])
+class Network(object):
+
+    #params for class are layers described by class e.g. ConvolutionalNetwork([Input([...]), Convolute([...]), Flatten(), Dense([...]), (Dense[...]]) 
+    #__init__ and setflattensize functions initilize network structures
     def __init__(self, layers):
         self.layers = layers
-        for layer in self.layers:
-            if isinstance(layer, Flatten):
-                setflattensize(layer)
-            if isinstance(layer, ConnectedLayer):
-                layer.weights = np.random.randn(self.layers[self.layers.index(layer)-1].size, layer.size)
+        self.channels = [layers[0].channels]
+        self.shapes = [layers[0].shape]
+        for layer, index in zip(layers, range(len(layers))):
+            if layer.id == 3:
+                self.setflattensize(layer, index)
+            if layer.id == 0:
+                #column, rows
+                layer.weights = np.random.randn(int(layer.size), int(self.layers[index-1].size))
+            #get list of channels and shapes/sizes that correspond with each layer
+            if index>0:
+                if self.channels[-1]*layer.channels == 0:
+                    self.channels.append(1)
+                else:
+                    self.channels.append(self.channels[-1]*layer.channels)
+                if layer.id == 1:
+                    self.shapes.append((int((self.shapes[-1][0]-layer.filter_shape[0]+1)/layer.pool_shape[0]), int((self.shapes[-1][1]-layer.filter_shape[1]+1)/layer.pool_shape[1])))
+                else:    
+                    self.shapes.append(layer.size)
+        for layer, index in zip(layers, range(len(layers))):
+            if layer.id == 1:
+                self.layers.insert(index+1, Pool())
     
-    def setflattensize(self, layer):
-        layer.size = self.layers[self.layers.index(layer)-1].pool_shape.size*self.layers[self.layers.index(layer)-1].feature_maps
+    def setflattensize(self, layer, index):
+        #set size of flattened convolutional pool layer
+        #get shape straight from input layer
+        layer.size = self.shapes[index-1][0]*self.shapes[index-1][1]*self.channels[index-1]
+
 
     def forwardpass(self, input_activations):
         activations = [input_activations]
         for layer in self.layers:
-            if isinstance(layer, ConvolutionalLayer):
+            if layer.id == 1:
                 feature_maps = []
                 pool_layers = []
-                for feature_map_index in len(layer.feature_maps):
-                    feature_maps.append(sigmoid(signal.correlate2d(activations[:-1], layer.filters[feature_map_index], mode='valid') + layer.biases[feature_map_index]))
-                for feature_map in feature_maps:
-                    pool_layers.append(skimage.measure.block_reduce(feature_map, layer.pool_shape, np.max))
-                activations.append((feature_maps, pool_layers))
-            elif isinstance(layer, ConnectedLayer):
-                #previous layer into 1 colomn
-                a = activations[-1]
-                if isinstance(self.layers[self.layers.index(layer)-1], ConvolutionalLayer):
-                    a = np.zeros((0, 1))
-                    for pool_maps in activations[-1]:
-                        a = np.append(a, np.reshape(pool_maps, (pool_maps.size, 1)), axis=0)
-                activations.append(sigmoid(np.dot(layer.weights, a) + layer.biases))
+                #k defined here since it is independent of channels of layer
+                #k reduces a 2d feature map then turns it into a 3d array
+                k = lambda x: (lambda y :  np.reshape(y, (y.shape[0], y.shape[1], 1)))(skimage.measure.block_reduce(x, layer.pool_shape, np.max))
+                for i in range(layer.channels):
+                    #l convolutes a 2d array and the layer filters and biases then turns it into 3d array
+                    l = lambda x : (lambda y : np.reshape(y, (y.shape[0], y.shape[1], 1)))(sigmoid(signal.correlate2d(x, layer.filters[i], mode='valid') + layer.biases[i])) 
+                    fm = np.concatenate([l(activations[-1][...,i]) for i in range(activations[-1].shape[-1])], axis=2)
+                    feature_maps.append(fm)
+                    pool_layers.append(np.concatenate([k(fm[...,i]) for i in range(fm.shape[-1])], axis=2))
+                activations.append(np.concatenate(feature_maps, axis=2))
+                activations.append(np.concatenate(pool_layers, axis=2))
+            elif layer.id == 0:
+                activations.append(sigmoid(np.dot(layer.weights, activations[-1]) + layer.biases))
+            elif layer.id == 3:
+                #flatten previous layer (either input layer or convolutional layer) into a column vector 
+                activations.append(np.reshape(activations[-1], (activations[-1].size, 1)))
         return activations
-    
+'''
     def backwardpass(self, input_layer, training_output):
         ####PSUEDO CODE
         #input x gradient = signal.convolve2d(filter, loss from last layer) zero padding full convolution
@@ -151,71 +180,98 @@ class ConvolutionalNetwork(object):
         #convolve2d is reversed correlate 
         activations = self.forwardpass(input_layer)
         layer_partial_derivative = []
-        for layer, activation in zip(self.layers[::-1], activations[::-1]):
-            if isinstance(layer, ConvolutionalLayer):
+        #iterate backwards over activations
+        for layer, activation in zip(self.layers, activations[::-1]):
+            if layer.id == 1:
                 # deal with backprop of max layer either with matrix or bypass?????
                 for feature_map in len(activation):
                     input_gradient = signal.convolve2d(layer.filters[feature_map], layer_partial_derivative[-1])
                     layer_partial_derivative.append(input_gradient)
                     #messy if multiple inputs for each feature map
                     #also will break if there is no layer before have to fix in some way
-                    filter_gradient = signal.correlate(activations[activations.idex(activation)-1], layer_partial_derivative[-1])
-            elif isinstance(layer, ConnectedLayer):
+                    filter_gradient = signal.correlate(activations[activations.index(activation)-1], layer_partial_derivative[-1])
+                    bias_gradient = sigmoid_derivative*layer_partial_derivative
+            elif layer.id == 2:
+                
+            elif layer.id == 0:
                 #given delta loss/delta activation 
                 #chain rule here this might not be exact but close
-                weight_gradient = sigmoid_derivative*layer_partial_derivative[-1]*activations[activations.idex(activation)-1]
+                weight_gradient = sigmoid_derivative*layer_partial_derivative[-1]*activations[activations.index(activation)-1]
                 bias_gradient = sigmoid_derivative*layer_partial_derivative
                 previous_layer_loss = sigmoid_derivative*layer_partial_derivative[-1]*layer.weights
                 #normal backprop
-            elif isinstance(layer, OutputLayer):
-                layer_partial_derivative.append(self.cost_derivative(activation, training_output))
             
         def cost_derivative(self, a, y):
         #quadratic derivative
-        #return (a-y)
-        #cross entropy derivative
-            return -((y/a)-(1-y)/(1-a))
+            qd = (a-y)
+            #cross entropy derivative
+            ced =  -((y/a)-(1-y)/(1-a))
+            return ced
+
+'''
 
 
+# self.id identifies what type of layer
+# 0 is Dense 
+# 1 is Convolutional
+# 2 is Pool
+# 3 is Flatten
+# 4 is Input 
+class Pool(object):
+    def __init__(self):
+        self.id = 2
 
-
-
-
-class ConvolutionalLayer(object):
-    #ConvolutionalLayer(feature_maps=5, filter_size=[2,2], stride_length=1, pool_type="L2")
-    def __init__(self, feature_maps, filter_shape, stride_length=1, pool_shape, pool_type):
-        self.feature_maps = feature_maps
-        self.filters = [np.random.randn(filter_shape) for i in range(feature_maps)]
-        self.biases = [random.random() for i in range (feature_maps)]
+#NOTE add an id element to use instead of ifinstance since ifinstance fails for some import cases
+class Convolute(object):
+    #Convolutional layer
+    #channels is amount of feature maps
+    #filter shape is the shape of the filter in a tuple e.g. (5, 5)
+    #pool_shape is the shape of the pool layer in a tuple e.g. (4,4) 
+    #pool_type is the type of pooling NOTE use string or integer to decide what type of pooling
+    #stride_length is the length of the stride in the convolution
+    def __init__(self, channels, filter_shape, pool_shape, stride_length=1):
+        self.channels = channels
+        self.filter_shape = filter_shape
+        self.filters = [np.random.randn(filter_shape[0], filter_shape[1]) for i in range(channels)]
+        self.biases = [random.random() for i in range (channels)]
         self.stride_length = stride_length
         self.pool_shape = pool_shape
-        self.pool_type = pool_type
+        self.id = 1
 
-
-class ConnectedLayer(object):
-    #ConnectedLayer(size=100)
-    def __init__(self, size, weights):
+class Dense(object):
+    #fully connected layer
+    #size is the amount of neurons in the dense layer
+    #biases are initialized randomly
+    #weights are initialized in the convulutionallayer __init__ by the flatten layer
+    def __init__(self, size):
         self.size = size
         self.weights = []
         self.biases = np.random.randn(size, 1)
+        self.channels = 0
+        self.id = 0
 
 class Flatten(object):
+    #flatten buffer between convolutional layer and fully connected layer
+    #size is the size of the previous layer in a single column vector and is initialized in convolutionallayer __init__
     def __init__(self):
         self.size = 0
+        self.channels = 0
+        self.id = 3 
 
-
-class OutputLayer(object):
-    #OutputLayer(size=10, type="softmax")
-    def __init__(self, shape):
-        self.size = size
-
-class InputLayer(object):
-    def __init__(self, size):
-        self.output_size = size
-
+class Input(object):
+    #input layer
+    #shape is the shape of the images being inputted
+    #channels is the amount of channels. e.g. grayscale has 1 channel and rgb has 3 channels
+    def __init__(self, shape, channels):
+        self.shape = shape
+        self.channels = channels
+        self.id = 4
 
 def sigmoid_derivative(z):
     return sigmoid(z)*(1-sigmoid(z))
 
 def sigmoid(z):
     return 1/(1+np.exp(-z))
+
+net = Network([Input((30, 30), 3), Convolute(3, (3, 3), (2, 2)), Flatten(), Dense(100), Dense(10)])
+arc = net.forwardpass(np.random.randn(30, 30, 3))
