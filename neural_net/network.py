@@ -126,7 +126,7 @@ class Network(object):
         self.shapes = [layers[0].shape]
         for layer, index in zip(layers, range(len(layers))):
             if layer.id == 1:
-                self.layers.insert(index+1, Pool(layer.pool_shape))
+                self.layers.insert(index+1, Pool(layer.pool_shape, layer.act_derivative, layer.act_type))
         for layer, index in zip(layers, range(len(layers))):
             if layer.id == 3:
                 self.setflattensize(layer, index)
@@ -142,13 +142,21 @@ class Network(object):
                     self.channels.append(layer.channels*self.channels[-1])
                 if layer.id == 1:
                     ##NOTE NOTE NOTE NOTE find way to add convo layer to self.shapes or else itll fuck up index
-                    self.layers[index].filters = [np.random.randn(layer.filter_shape[0], layer.filter_shape[1])*np.sqrt(2/(self.shapes[index-1][0]*self.shapes[index-1][1])) for i in range(layer.channels)]
                     self.shapes.append((self.shapes[-1][0]-layer.filter_shape[0]+1, self.shapes[-1][1]-layer.filter_shape[1]+1))
                 if layer.id == 2:    
                     self.shapes.append((int(self.shapes[-1][0]/layer.pool_shape[0]), int(self.shapes[-1][1]/layer.pool_shape[1])))
                 if layer.id == 0 or layer.id == 3:    
                     self.shapes.append(layer.size)
-        
+        #weights initialization
+        for layer, index in zip(self.layers[1:], range(1, len(self.layers)+1)):
+            if index != len(layers)-1:
+                if layer.id == 0:
+                    layer.weights = layer.weights*np.sqrt(12/(self.shapes[index-1]*self.channels[index-1] + self.shapes[index+1]*self.channels[index+1]))
+                if layer.id == 1:
+                    layer.filters = [f*np.sqrt(12/(self.shapes[index-1][0]*self.shapes[index-1][1]*self.channels[index-1] + self.shapes[index+1][0]*self.shapes[index+1][1]*self.channels[index+1])) for f in layer.filters]
+            else:
+                layer.weights = layer.weights*np.sqrt(12/(self.shapes[index-1]*self.channels[index-1]))
+
     
     def setflattensize(self, layer, index):
         #set size of flattened convolutional pool layer
@@ -171,6 +179,8 @@ class Network(object):
         if not backprop:
                 return activations
         else:
+       #     print('LAYER ACTIVATION SIZES ----- {0}'.format([np.linalg.norm(a) for a in activations[1:]]))
+        #    print('last layer:--->:: {0}'.format(activations[-1]))
             return activations, zs
         
 
@@ -181,13 +191,15 @@ class Network(object):
         #input x gradient = signal.convolve2d(filter, loss from last layer) zero padding full convolution
         #filter f gradient = signal.correlate(input x, loss from last layer)
         #convolve2d is reversed correlate 
-        activations, zs = self.forwardpass(input_layer, backprop=True)
+        a_z = self.forwardpass(input_layer, backprop=True)
         layer_partial_derivative = []
-        layer_partial_derivative.append(self.cost_derivative(activations[-1], training_output)*self.layers[-1].act_derivative(zs[-1]))
-        self.layers[-1].weight_gradients = self.layers[-1].weight_gradients + np.dot(layer_partial_derivative[-1], activations[-2].transpose())
+        layer_partial_derivative.append(self.cost_derivative(a_z[0][-1], training_output)*self.layers[-1].act_derivative(a_z[self.layers[-1].act_type][-1]))
+        self.layers[-1].weight_gradients = self.layers[-1].weight_gradients + np.dot(layer_partial_derivative[-1], a_z[0][-2].transpose())
         self.layers[-1].bias_gradients = self.layers[-1].bias_gradients + layer_partial_derivative[-1]
 
-        for layer, index in zip(self.layers[len(self.layers)-2::-1], [self.layers.index(i) for i in self.layers[len(self.layers)-2::-1]]):
+   #     print('origin story- -- - - - - : ;: ;-; {0}'.format(layer_partial_derivative[-1]))
+
+        for layer, index in zip(self.layers[len(self.layers)-2:0:-1], [self.layers.index(i) for i in self.layers[len(self.layers)-2:0:-1]]):
             try:
                 w = self.layers[index+1].weights
             except:
@@ -200,32 +212,48 @@ class Network(object):
                 l = self.layers[index+1].id
             except:
                 l = None
+            #print('indexx {0}'.format(index))
+            #print(len(self.layers))
+            b = layer.backprop(w, w2, a_z, index, layer_partial_derivative[-1], l)
+            [layer_partial_derivative.append(i) for i in b]
             layer_partial_derivative = [i for i in layer_partial_derivative if i is not None]
-        self.loss.append(self.cel(activations[-1], layer_partial_derivative[0]))
+            #print(layer_partial_derivative[-1].shape)
+            #print('a: {0} \n pd: {1}'.format(activations[-1], layer_partial_derivative[0]))
+        self.loss.append(self.cel(a_z[0][-1], layer_partial_derivative[0]))
+        #print('loss-----------:::: {0}'.format(np.linalg.norm(self.cel(a_z[0][-1], layer_partial_derivative[0]))))
         
     def cel(self, a, y):
-        return y*np.log(a)+(1-y)*np.log(1-a)
+        offset = 1e-7
+        return y*np.log(a+offset)+(1-y)*np.log(1-(a-offset))
 
 
 
     def update_weights_biases(self, learning_rate, batch_size, threshold):
         for layer in self.layers:
             if layer.id == 0:
+
+              #  print('BEFORE!!!!!! weight: {0} ------- bias: {1}'.format(np.linalg.norm(layer.weight_gradients), np.linalg.norm(layer.bias_gradients)))
                 if np.linalg.norm(layer.weight_gradients) > threshold:
                     layer.weight_gradients = layer.weight_gradients*threshold/np.linalg.norm(layer.weight_gradients)
                 if np.linalg.norm(layer.bias_gradients) > threshold:
                     layer.bias_gradients = layer.bias_gradients*threshold/np.linalg.norm(layer.bias_gradients)
+               # print('AFTER!!!!!! weight: {0} ------- bias: {1}'.format(np.linalg.norm(layer.weight_gradients), np.linalg.norm(layer.bias_gradients)))
+ 
+     #           print('weights: ---- {0} -- biases: {1}'.format(np.linalg.norm(layer.weight_gradients), np.linalg.norm(layer.bias_gradients)))
                 layer.weights = layer.weights - (learning_rate/batch_size)*layer.weight_gradients
                 layer.biases = layer.biases - (learning_rate/batch_size)*layer.bias_gradients
                 layer.weight_gradients = np.zeros(layer.weight_gradients.shape)
                 layer.bias_gradients = np.zeros(layer.bias_gradients.shape)
             if layer.id == 1:
+                ''''
                 for i in layer.filter_gradients:
                     if np.linalg.norm(i) > threshold:
                         layer.filter_gradients[layer.filter_gradients.index(i)] = i*threshold/np.linalg.norm(i)
                 for b in layer.bias_gradients:
                     if b > threshold/(layer.filter_shape[0]*layer.filter_shape[1]):
                         layer.bias_gradients[layer.bias_gradients.index(b)] = threshold/(layer.filter_shape[0]*layer.filter_shape[1])
+                #print('filters: {0} ------- bias: {1}'.format([np.linalg.norm(i) for i in layer.filter_gradients], np.linalg.norm(layer.bias_gradients)))
+                '''
                 layer.filters = [f-(learning_rate/batch_size)*fg for f,fg in zip(layer.filters, layer.filter_gradients)]
                 layer.biases = [b-(learning_rate/batch_size)*bg for b, bg in zip(layer.biases, layer.bias_gradients)]
                 layer.filter_gradients = [np.zeros(i.shape) for i in layer.filter_gradients]
@@ -266,7 +294,8 @@ class Network(object):
         #quadratic derivative
         qd = (a-y)
         #cross entropy derivative
-        ced =  -((y/a)-(1-y)/(1-a))
+        offset = 1e-7
+        ced =  -((y/(a+offset))-(1-y)/(1-(a-offset)))
         return qd
 
 
@@ -282,27 +311,38 @@ class Network(object):
 
 activation_functions = {
     'sigmoid': lambda y: sigmoid(y),
-    'ReLu': lambda y: y*(y>0)
+    'ReLu': lambda y: y*(y>0)+0.01*y*(y<=0),
+    'softmax': lambda y: np.exp(y-np.max(y))/np.sum(np.exp(y-np.max(y)))
 }
 activation_derivative = {
     'sigmoid': lambda y: sigmoid_derivative(y),
-    'ReLu': lambda y: 1*(y>0)
+    'ReLu': lambda y: 1*(y>0)+0.01*(y<=0),
+    'softmax': lambda y: softmax_derivative(y)
 }
+
+def softmax_derivative(y):
+    sd = np.zeros((y.size, y.size))
+    for i in range(sd.shape[0]):
+        for j in range(sd.shape[1]):
+            sd[i][j] = y[i]*((i==j)-y[j])
+    a = np.reshape(np.sum(sd, axis=1), y.shape)
+    return a
 
 
 class Pool(object):
-    def __init__(self, shape):
+    def __init__(self, shape, activation_derivative, act_type):
         self.id = 2
         self.channels = 1
         self.pool_shape = shape
+        self.act_derivative = activation_derivative
+        self.act_type = act_type
     
-    def backprop(self, w, w2, a, z, i, d, l):
+    def backprop(self, w, w2, a_z, i, d, l):
         if l == 3:
-            print(w2.shape)
-            flattened = np.dot(w2.transpose(), d)*sigmoid_derivative(z[i+1])
-            return np.reshape(flattened, a[i].shape)
+            flattened = np.dot(w2.transpose(), d)*self.act_derivative(a_z[self.act_type][i+1])
+            return [np.reshape(flattened, a_z[0][i].shape)]
         else:
-            return None
+            return [None]
     
     def feedforward(self, a):
         return [None], [None]
@@ -326,34 +366,35 @@ class Convolute(object):
         self.pool_shape = pool_shape
         self.act_func = activation_functions[activation_type]
         self.act_derivative = activation_derivative[activation_type]
+        self.act_type = int(activation_type!='softmax')
         self.id = 1
 
-    def backprop(self,w, w2, a, z, i, d, l):
+    def backprop(self, w, w2, a_z, i, d, l):
         filter_gradients = []
         bias_gradients = []
         input_gradients = []
         current_partial_derivates = [] 
-        for feature_map in range(a[i].shape[-1]): 
+        for feature_map in range(a_z[0][i].shape[-1]): 
             #print(layer_partial_derivative[-1].shape)
                     
-            l = a[i+1]
+            l = a_z[0][i+1]
             pool_repeat = l[...,feature_map].repeat(self.pool_shape[0], axis=0).repeat(self.pool_shape[1], axis=1)
-            dPoolC = np.equal(a[i][...,feature_map], pool_repeat).astype(int)
+            dPoolC = np.equal(a_z[0][i][...,feature_map], pool_repeat).astype(int)
             # dL/dOut
             dCout = dPoolC*d[...,feature_map].repeat(self.pool_shape[0], axis=0).repeat(self.pool_shape[1], axis=1)
-            dCout = self.act_derivative(a[i][...,feature_map]>=0)*dCout
+            dCout = self.act_derivative(a_z[self.act_type][i][...,feature_map])*dCout
             current_partial_derivates.append(np.reshape(dCout, (dCout.shape[0], dCout.shape[1], 1)))
             if feature_map%self.channels == 0:
                 input_gradient = signal.convolve2d(self.filters[0], dCout)
                 input_gradients.append(np.reshape(input_gradient, (input_gradient.shape[0], input_gradient.shape[1], 1)))
-            if feature_map<a[i].shape[-1]/self.channels:
-                filter_gradients.append(signal.correlate2d(a[i-1][...,feature_map], dCout, mode='valid'))
-                bias_gradients.append(np.sum(z[i][...,feature_map]*dCout))
+            if feature_map<self.channels:
+                filter_gradients.append(signal.correlate2d(a_z[0][i-1][...,0], dCout, mode='valid'))
+                bias_gradients.append(np.sum(a_z[1][i][...,0]*dCout))
         for f, i  in zip(filter_gradients, range(len(filter_gradients))):
             self.filter_gradients[i] = self.filter_gradients[i] + f
         for b, i  in zip(bias_gradients, range(len(bias_gradients))):
             self.bias_gradients[i] = self.bias_gradients[i] + b
-        return np.concatenate(current_partial_derivates, axis=2), np.concatenate(input_gradients, axis=2)
+        return [np.concatenate(current_partial_derivates, axis=2), np.concatenate(input_gradients, axis=2)]
 
     def feedforward(self, a):
         feature_maps = []
@@ -385,19 +426,22 @@ class Dense(object):
         self.channels = 1
         self.act_func = activation_functions[activation_type]
         self.act_derivative = activation_derivative[activation_type]
+        #print(int(activation_type=='softmax'))
+        self.act_type = int(activation_type!='softmax')
         self.id = 0
     
-    def backprop(self, w, w2, a, z, i, d, l):
-        lpd = np.dot(w.transpose(), d)*self.act_derivative(z[i])
-        weight_gradient = np.dot(lpd, a[i-1].transpose())
+    def backprop(self, w, w2, a_z, i, d, l):
+        lpd = np.dot(w.transpose(), d)*self.act_derivative(a_z[self.act_type][i])
+       # print('lpd: ---- > {0}'.format(np.linalg.norm(lpd)))
+        weight_gradient = np.dot(lpd, a_z[0][i-1].transpose())
         bias_gradient = lpd
         self.weight_gradients = self.weight_gradients + weight_gradient
         self.bias_gradients = self.bias_gradients + bias_gradient 
-        return(lpd)
+        return [lpd]
 
     def feedforward(self, a):
         z = np.dot(self.weights, a) + self.biases
-        return [z], [sigmoid(z)]
+        return [z], [self.act_func(z)]
 
 
 class Flatten(object):
@@ -407,9 +451,10 @@ class Flatten(object):
         self.size = 0
         self.channels = 0
         self.id = 3 
+        self.act_type = 0
 
-    def backprop(self, w, w2, a, z, i, d, l):
-        return None
+    def backprop(self, w, w2, a_z, i, d, l):
+        return [None]
 
     def feedforward(self, a):
         return [[np.reshape(a, (a.size, 1))] for i in range(2)]
@@ -438,10 +483,12 @@ from data_loader import load_data_sign
 data = load_data_sign()
 random.shuffle(data)
 
-net = Network([Input((64, 64), 1), Convolute(5, (3,3), (2,2), 'ReLu'), Convolute(3, (7, 7), (5, 5), 'ReLu'), Flatten(), Dense(100, 'ReLu'), Dense(10, 'ReLu')])
+
+net = Network([Input((64, 64), 1), Convolute(5, (3, 3), (2, 2), 'ReLu'), Convolute(3, (5, 5), (3, 3), 'ReLu'), Flatten(), Dense(750, 'ReLu'), Dense(10, 'softmax')])
+#net = Network([Input((64, 64), 1), Flatten(), Dense(1000, 'ReLu'), Dense(100, 'ReLu'), Dense(10, 'softmax')])
 #print(net.channels)
 #print(net.shapes)
-net.train(400, 50, 1, 10, 5, data[:-100], data[-100:])
+net.train(400, 50, 1, 5, 10, data[:-100], data[-100:])
     
 #print([(np.random.randn(96, 96, 3).shape, round(random.uniform(0, 1))) for i in range(1)])
 '''net.layers[1].filters[0] = np.array([[1, 1], [1, 1]])
