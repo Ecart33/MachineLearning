@@ -3,6 +3,7 @@ import random
 import math
 from scipy import signal
 import skimage.measure
+import json
 
 #rgb input is 3 differnet channels treat as 3 different feature maps in MLP treat as 3 different networks?
 
@@ -186,14 +187,22 @@ class Network(object):
 
 
 
-    def backwardpass(self, input_layer, training_output):
+    def backwardpass(self, input_layer, training_output, threshold):
         ####PSUEDO CODE
         #input x gradient = signal.convolve2d(filter, loss from last layer) zero padding full convolution
         #filter f gradient = signal.correlate(input x, loss from last layer)
         #convolve2d is reversed correlate 
         a_z = self.forwardpass(input_layer, backprop=True)
         layer_partial_derivative = []
-        layer_partial_derivative.append(self.cost_derivative(a_z[0][-1], training_output)*self.layers[-1].act_derivative(a_z[self.layers[-1].act_type][-1]))
+        gradient = self.cost_derivative(a_z[0][-1], training_output)*self.layers[-1].act_derivative(a_z[self.layers[-1].act_type][-1])
+        if np.linalg.norm(gradient) > threshold:
+            layer_partial_derivative.append(gradient*threshold/np.linalg.norm(gradient))
+        else:
+            layer_partial_derivative.append(gradient)
+        #print('cost derivative: {0}'.format(self.cost_derivative(a_z[0][-1], training_output)))
+        #print(a_z[0][-1])
+        #print('activation derivative: {0}'.format(np.linalg.norm(self.layers[-1].act_derivative(a_z[self.layers[-1].act_type][-1]))))
+        #print('layer size: {0} ----- error size: {1}'.format(self.layers[-1].size, np.linalg.norm(layer_partial_derivative[-1])))
         self.layers[-1].weight_gradients = self.layers[-1].weight_gradients + np.dot(layer_partial_derivative[-1], a_z[0][-2].transpose())
         self.layers[-1].bias_gradients = self.layers[-1].bias_gradients + layer_partial_derivative[-1]
 
@@ -231,21 +240,21 @@ class Network(object):
     def update_weights_biases(self, learning_rate, batch_size, threshold):
         for layer in self.layers:
             if layer.id == 0:
-
+                '''
               #  print('BEFORE!!!!!! weight: {0} ------- bias: {1}'.format(np.linalg.norm(layer.weight_gradients), np.linalg.norm(layer.bias_gradients)))
                 if np.linalg.norm(layer.weight_gradients) > threshold:
                     layer.weight_gradients = layer.weight_gradients*threshold/np.linalg.norm(layer.weight_gradients)
                 if np.linalg.norm(layer.bias_gradients) > threshold:
                     layer.bias_gradients = layer.bias_gradients*threshold/np.linalg.norm(layer.bias_gradients)
                # print('AFTER!!!!!! weight: {0} ------- bias: {1}'.format(np.linalg.norm(layer.weight_gradients), np.linalg.norm(layer.bias_gradients)))
- 
+                '''
      #           print('weights: ---- {0} -- biases: {1}'.format(np.linalg.norm(layer.weight_gradients), np.linalg.norm(layer.bias_gradients)))
                 layer.weights = layer.weights - (learning_rate/batch_size)*layer.weight_gradients
                 layer.biases = layer.biases - (learning_rate/batch_size)*layer.bias_gradients
                 layer.weight_gradients = np.zeros(layer.weight_gradients.shape)
                 layer.bias_gradients = np.zeros(layer.bias_gradients.shape)
             if layer.id == 1:
-                ''''
+                '''
                 for i in layer.filter_gradients:
                     if np.linalg.norm(i) > threshold:
                         layer.filter_gradients[layer.filter_gradients.index(i)] = i*threshold/np.linalg.norm(i)
@@ -270,14 +279,17 @@ class Network(object):
             mini_batches = [training_data[k:k+batch_size] for k in range(0, len(training_data), batch_size)]
             for batch in mini_batches:
                 for input_data, output_data in batch:
-                    self.backwardpass(input_data, output_data)
+                    self.backwardpass(input_data, output_data, threshold)
                 self.update_weights_biases(learning_rate_r, batch_size, threshold)
             learning_rate_r = self.update_learning_rate(learning_rate, i, cycle_length)  
-            print(np.linalg.norm(-sum(self.loss)/len(training_data)))
-            self.loss = []
-            print(learning_rate_r)
             if test_data:
-                print('Epoch {0}: {1}'.format(i, self.test_progress(test_data)/len(test_data)))
+                print('epoch {0} --------- loss: {1} --------- learning rate: {2} --------- test accuracy: {3}'.format( \
+                    i, np.linalg.norm(-sum(self.loss)/len(training_data)), learning_rate_r, self.test_progress(test_data)/len(test_data)))
+            else:
+                print('epoch {0} --------- loss: {1} --------- learning rate: {2}'.format( \
+                    i, np.linalg.norm(-sum(self.loss)/len(training_data)), learning_rate_r))
+            self.loss = []
+            
 
     def update_learning_rate(self, learning_rate, epoch, cycle_length):
        value_scaled = (epoch % cycle_length)/(cycle_length-1)
@@ -296,7 +308,7 @@ class Network(object):
         #cross entropy derivative
         offset = 1e-7
         ced =  -((y/(a+offset))-(1-y)/(1-(a-offset)))
-        return qd
+        return ced
 
 
 
@@ -317,7 +329,7 @@ activation_functions = {
 activation_derivative = {
     'sigmoid': lambda y: sigmoid_derivative(y),
     'ReLu': lambda y: 1*(y>0)+0.01*(y<=0),
-    'softmax': lambda y: softmax_derivative(y)
+    'softmax': lambda y: y*(1-y)#softmax_derivative(y)
 }
 
 def softmax_derivative(y):
@@ -325,7 +337,8 @@ def softmax_derivative(y):
     for i in range(sd.shape[0]):
         for j in range(sd.shape[1]):
             sd[i][j] = y[i]*((i==j)-y[j])
-    a = np.reshape(np.sum(sd, axis=1), y.shape)
+   # a = np.reshape(np.sum(sd, axis=1), y.shape)
+    a = np.reshape(np.diag(sd), y.shape)
     return a
 
 
@@ -360,7 +373,7 @@ class Convolute(object):
         self.filter_shape = filter_shape
         self.filters = [np.random.randn(filter_shape[0], filter_shape[1]) for i in range(channels)]
         self.filter_gradients = [np.zeros(i.shape) for i in self.filters]
-        self.biases = [random.random() for i in range (channels)]
+        self.biases = [0 for i in range (channels)]
         self.bias_gradients = [0 for i in self.biases]
         self.stride_length = stride_length
         self.pool_shape = pool_shape
@@ -421,7 +434,7 @@ class Dense(object):
         self.size = size
         self.weights = None
         self.weight_gradients = None
-        self.biases = np.random.randn(size, 1)
+        self.biases = np.zeros((size, 1))
         self.bias_gradients = np.zeros(self.biases.shape)
         self.channels = 1
         self.act_func = activation_functions[activation_type]
@@ -432,7 +445,7 @@ class Dense(object):
     
     def backprop(self, w, w2, a_z, i, d, l):
         lpd = np.dot(w.transpose(), d)*self.act_derivative(a_z[self.act_type][i])
-       # print('lpd: ---- > {0}'.format(np.linalg.norm(lpd)))
+        #print('layer size: {0} ----- error size: {1}'.format(self.size, np.linalg.norm(lpd)))
         weight_gradient = np.dot(lpd, a_z[0][i-1].transpose())
         bias_gradient = lpd
         self.weight_gradients = self.weight_gradients + weight_gradient
@@ -475,22 +488,53 @@ def sigmoid_derivative(z):
 def sigmoid(z):
     return 1/(1+np.exp(-z))
 
+
+
+
+def save_to_json(network, filename):
+    layer_json = []
+    for layer in network.layers:
+        layer_dict = {}
+        for i in layer.__dict__:
+            if type(layer.__dict__[i]).__name__ == 'ndarray': 
+                layer.__dict__[i] = layer.__dict__[i].tolist()
+            if type(layer.__dict__[i]).__name__ != 'function': 
+                layer_dict[i] = layer.__dict__[i]
+
+        layer_json.append(layer_dict)
+    data = {}
+    data['layers'] = layer_json
+    with open(filename, 'w+') as outfile:
+        json.dump(data, outfile)
+
+def load_from_json(net, filename):
+    with open(filename) as json_file:
+        data = json.load(json_file)
+        for net_layer, json_layer in zip(net.layers, data['layers']):
+            for i in json_layer:
+                if type(json_layer[i]).__name__ == 'list':
+                    json_layer[i] = np.array(json_layer[i])
+                net_layer.__dict__[i] = json_layer[i]
+
+
 #net = Network([Input((30, 30), 3), Convolute(1, (7,7), (5, 5)), Flatten(), Dense(100), Dense(10)])
 #print(net.layers[5].weights.shape)
 #net.backwardpass(np.random.randn(30, 30, 3), np.random.randn(10, 1))
-
+'''
 from data_loader import load_data_sign
 data = load_data_sign()
 random.shuffle(data)
 
 
-net = Network([Input((64, 64), 1), Convolute(5, (3, 3), (2, 2), 'ReLu'), Convolute(3, (5, 5), (3, 3), 'ReLu'), Flatten(), Dense(750, 'ReLu'), Dense(10, 'softmax')])
+net = Network([Input((64, 64), 1), Flatten(), Dense(750, 'ReLu'),  Dense(750, 'ReLu'), Dense(10, 'softmax')])
 #net = Network([Input((64, 64), 1), Flatten(), Dense(1000, 'ReLu'), Dense(100, 'ReLu'), Dense(10, 'softmax')])
 #print(net.channels)
 #print(net.shapes)
-net.train(400, 50, 1, 5, 10, data[:-100], data[-100:])
-    
+net.train(400, 100, 0.005, 5, 0.5, data[:-100], data[-100:])
+#net.train(10, 100, 0.05, 5, 1, data[:-1500], data[-100:])
+save_to_json(net, 'mlpdeep.txt')
 #print([(np.random.randn(96, 96, 3).shape, round(random.uniform(0, 1))) for i in range(1)])
+'''
 '''net.layers[1].filters[0] = np.array([[1, 1], [1, 1]])
 
 i = np.array([[[1], [0], [2], [3]], [[0], [1], [3], [2]], [[1], [1], [1], [1]], [[2], [3], [0], [1]]])
@@ -505,3 +549,4 @@ w = net.forwardpass(i)[1]'''
 #print(net.test_progress([(np.random.randn(96, 96, 3), vect(round(random.uniform(0, 1)))) for i in range(100)]))
 #print(net.test_progress(data[100:200]))
 
+#net = n.Network([n.Input((64, 64), 1), n.Flatten(), n.Dense(750, 'ReLu'), n.Dense(750, 'ReLu'), n.Dense(10, 'softmax')])
